@@ -1,9 +1,9 @@
 table! {
     please_ids (id) {
-        id -> Integer,
+        id -> Int4,
         creation -> Timestamptz,
         expiry -> Timestamptz,
         title -> Text,
-        refresh_count -> Integer,
+        refresh_count -> Int4,
     }
 }
