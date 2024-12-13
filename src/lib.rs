@@ -126,10 +126,6 @@
 #![allow(proc_macro_derive_resolution_fallback)]
 #![deny(missing_docs)]
 
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
-use std::marker::PhantomData;
-
 #[macro_use]
 extern crate diesel;
 extern crate chrono;
@@ -141,6 +137,7 @@ use diesel::dsl;
 use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::Connection;
+use thiserror::Error;
 
 mod schema;
 
@@ -158,66 +155,19 @@ struct PleaseId {
 pub struct ExpiredId(PleaseId);
 
 /// Error type returned by this library
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Error)]
+#[non_exhaustive]
 pub enum PleaseError<P> {
     /// An error occurred whilst obtaining a connection from the
     /// connection provider.
+    #[error(transparent)]
     Provider(P),
     /// An error occurred whilst querying the database.
-    Query(diesel::result::Error),
+    #[error(transparent)]
+    Query(#[from] diesel::result::Error),
     /// Tried to use a handle which had already expired.
+    #[error("The `please` handle has expired and can no longer be used")]
     Expired,
-
-    #[doc(hidden)]
-    __Nonexhaustive,
-}
-
-impl<P: Error> Display for PleaseError<P> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
-        match self {
-            &PleaseError::Provider(ref e) => Display::fmt(e, f),
-            &PleaseError::Query(ref e) => Display::fmt(e, f),
-            &PleaseError::Expired => Display::fmt(self.description(), f),
-            &PleaseError::__Nonexhaustive => unreachable!(),
-        }
-    }
-}
-
-impl<P: Error> Error for PleaseError<P> {
-    fn description(&self) -> &str {
-        match self {
-            &PleaseError::Provider(ref e) => e.description(),
-            &PleaseError::Query(ref e) => e.description(),
-            &PleaseError::Expired => "The `please` handle has expired and can no longer be used",
-            &PleaseError::__Nonexhaustive => unreachable!(),
-        }
-    }
-    fn cause(&self) -> Option<&Error> {
-        match self {
-            &PleaseError::Provider(ref e) => Some(e),
-            &PleaseError::Query(ref e) => Some(e),
-            &PleaseError::Expired => None,
-            &PleaseError::__Nonexhaustive => unreachable!(),
-        }
-    }
-}
-
-impl<P> From<diesel::result::Error> for PleaseError<P> {
-    fn from(other: diesel::result::Error) -> Self {
-        PleaseError::Query(other)
-    }
-}
-
-struct ErrorWrapper<E, P>(E, PhantomData<fn(P) -> P>);
-impl<P, E: From<PleaseError<P>>> From<diesel::result::Error> for ErrorWrapper<E, P> {
-    fn from(other: diesel::result::Error) -> Self {
-        ErrorWrapper(PleaseError::Query(other).into(), PhantomData)
-    }
-}
-impl<P, E: From<PleaseError<P>>> From<PleaseError<P>> for ErrorWrapper<E, P> {
-    fn from(other: PleaseError<P>) -> Self {
-        ErrorWrapper(other.into(), PhantomData)
-    }
 }
 
 /// Convenient alias for `Result` types returned from this library.
@@ -247,16 +197,16 @@ pub struct PleaseHandle<P: ConnectionProvider> {
 impl<P: ConnectionProvider> PleaseHandle<P> {
     fn transaction_internal<
         R,
-        E: From<PleaseError<P::Error>>,
+        E: From<PleaseError<P::Error>> + From<diesel::result::Error>,
         F: FnOnce(&mut P::Connection) -> Result<R, E>,
     >(
         provider: &P,
         f: F,
     ) -> Result<R, E> {
-        let mut conn = provider.get().map_err(PleaseError::Provider)?;
-
-        conn.transaction(|conn| f(conn).map_err(|e| ErrorWrapper(e, PhantomData)))
-            .map_err(|ErrorWrapper(e, _)| e)
+        provider
+            .get()
+            .map_err(PleaseError::Provider)?
+            .transaction(|conn| f(conn))
     }
 
     /// Construct a new handle using the specified connection provider.
@@ -339,7 +289,7 @@ impl<P: ConnectionProvider> PleaseHandle<P> {
     /// of a transaction.
     pub fn transaction<R, E, F>(&mut self, f: F) -> Result<R, E>
     where
-        E: From<PleaseError<P::Error>>,
+        E: From<PleaseError<P::Error>> + From<diesel::result::Error>,
         F: FnOnce(&P::Connection, i32) -> Result<R, E>,
     {
         use self::schema::*;

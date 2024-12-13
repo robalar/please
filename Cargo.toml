@@ -2,7 +2,7 @@
 name = "please"
 version = "0.2.1"
 authors = ["Diggory Blake <diggsey@googlemail.com>"]
-edition = "2018"
+edition = "2021"
 description = "Foundation for implementing long-lived database locks"
 documentation = "https://diggsey.github.io/please/please/index.html"
 repository = "https://github.com/Diggsey/please"
@@ -11,6 +11,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 diesel = { version = "2.2.0", features = ["postgres", "chrono"] }
 chrono = "0.4.6"
+thiserror = "2.0.3"
 
 [dev-dependencies]
 dotenv = "0.13.0"
